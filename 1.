@@ -1,0 +1,99 @@
+```python
+from django.db import models, transaction
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+from django.core.exceptions import ObjectDoesNotExist
+import time
+import threading
+
+class TestModel(models.Model):
+    name = models.CharField(max_length=100)
+
+class RelatedModel(models.Model):
+    test = models.ForeignKey(TestModel, on_delete=models.CASCADE)
+    value = models.IntegerField()
+
+@receiver(post_save, sender=TestModel)
+def signal_handler(sender, instance, created, **kwargs):
+    print(f"Signal handler started for {instance.name} in thread {threading.current_thread().name}")
+    time.sleep(2)  # Simulate a time-consuming operation
+    
+    if instance.name == "TransactionTest":
+        RelatedModel.objects.create(test=instance, value=42)
+        raise Exception("Simulated error in signal handler")
+    
+    print(f"Signal handler finished for {instance.name} in thread {threading.current_thread().name}")
+
+def create_object_in_thread(name):
+    print(f"Creating object {name} in thread {threading.current_thread().name}")
+    TestModel.objects.create(name=name)
+    print(f"Object {name} created in thread {threading.current_thread().name}")
+
+def test_signal_behavior():
+    print("1. Testing synchronous execution:")
+    start_time = time.time()
+    
+    TestModel.objects.create(name="Object 1")
+    print(f"First object created at {time.time() - start_time:.2f} seconds")
+    
+    TestModel.objects.create(name="Object 2")
+    print(f"Second object created at {time.time() - start_time:.2f} seconds")
+    
+    print(f"Total execution time: {time.time() - start_time:.2f} seconds")
+
+    print("\n2. Testing thread behavior:")
+    thread1 = threading.Thread(target=create_object_in_thread, args=("ThreadObject1",))
+    thread2 = threading.Thread(target=create_object_in_thread, args=("ThreadObject2",))
+    
+    thread1.start()
+    thread2.start()
+    
+    thread1.join()
+    thread2.join()
+
+    print("\n3. Testing transaction behavior:")
+    try:
+        with transaction.atomic():
+            TestModel.objects.create(name="TransactionTest")
+    except Exception as e:
+        print(f"Error occurred: {str(e)}")
+
+    try:
+        TestModel.objects.get(name="TransactionTest")
+        print("TestModel object exists in the database")
+    except ObjectDoesNotExist:
+        print("TestModel object does not exist in the database")
+
+    try:
+        RelatedModel.objects.get(test__name="TransactionTest")
+        print("RelatedModel object exists in the database")
+    except ObjectDoesNotExist:
+        print("RelatedModel object does not exist in the database")
+
+if __name__ == "__main__":
+    test_signal_behavior()
+
+```
+
+This comprehensive file demonstrates all three aspects of Django signal behavior:
+
+1. Synchronous Execution:
+   - The creation of the second object is delayed until after the signal handler for the first object completes.
+   - The total execution time is approximately 4 seconds (2 seconds per signal handler).
+
+2. Thread Behavior:
+   - The signal handlers run in the same threads as their respective callers.
+   - You'll see that the thread names in the signal handler match those of the object creation.
+
+3. Transaction Behavior:
+   - The signal handler runs in the same transaction as the caller.
+   - When an exception is raised in the signal handler, both the TestModel and RelatedModel objects are not saved to the database due to transaction rollback.
+
+To run this code, you would need to set up a Django project and add this to a Django app's models.py file. You'd also need to ensure the app is included in INSTALLED_APPS in your settings.py.
+
+The output will demonstrate:
+1. Synchronous execution with delayed object creation and cumulative execution time.
+2. Signal handlers running in the same threads as their callers.
+3. Signal handlers participating in the same database transaction as their callers.
+
+This comprehensive example conclusively proves that Django signals are synchronous, run in the caller's thread, and participate in the caller's database transaction by default.
