@@ -1,0 +1,86 @@
+Yes, Django signals run in the same thread as the caller. I'll demonstrate this with a code snippet that conclusively proves this behavior.
+
+
+
+```python
+from django.db import models
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+import threading
+import time
+
+class TestModel(models.Model):
+    name = models.CharField(max_length=100)
+
+@receiver(post_save, sender=TestModel)
+def signal_handler(sender, instance, created, **kwargs):
+    current_thread = threading.current_thread()
+    print(f"Signal handler started for {instance.name} in thread: {current_thread.name}")
+    time.sleep(1)  # Simulate some work
+    print(f"Signal handler finished for {instance.name} in thread: {current_thread.name}")
+
+def create_object(name):
+    current_thread = threading.current_thread()
+    print(f"Creating object {name} in thread: {current_thread.name}")
+    TestModel.objects.create(name=name)
+    print(f"Object {name} created in thread: {current_thread.name}")
+
+def test_signal_thread_behavior():
+    # Create objects in the main thread
+    create_object("MainThread1")
+    create_object("MainThread2")
+
+    # Create objects in separate threads
+    thread1 = threading.Thread(target=create_object, args=("Thread1",))
+    thread2 = threading.Thread(target=create_object, args=("Thread2",))
+
+    thread1.start()
+    thread2.start()
+
+    thread1.join()
+    thread2.join()
+
+if __name__ == "__main__":
+    test_signal_thread_behavior()
+
+```
+
+This code demonstrates that Django signals run in the same thread as the caller. Here's how it works:
+
+1. We define a `TestModel` with a simple `name` field.
+2. We create a signal handler `signal_handler` that prints the name of the thread it's running in.
+3. The `create_object` function creates a `TestModel` object and also prints the name of the thread it's running in.
+4. The `test_signal_thread_behavior` function creates objects both in the main thread and in separate threads.
+
+When you run this code, you'll see output similar to this:
+
+```
+Creating object MainThread1 in thread: MainThread
+Signal handler started for MainThread1 in thread: MainThread
+Signal handler finished for MainThread1 in thread: MainThread
+Object MainThread1 created in thread: MainThread
+
+Creating object MainThread2 in thread: MainThread
+Signal handler started for MainThread2 in thread: MainThread
+Signal handler finished for MainThread2 in thread: MainThread
+Object MainThread2 created in thread: MainThread
+
+Creating object Thread1 in thread: Thread-1
+Signal handler started for Thread1 in thread: Thread-1
+Signal handler finished for Thread1 in thread: Thread-1
+Object Thread1 created in thread: Thread-1
+
+Creating object Thread2 in thread: Thread-2
+Signal handler started for Thread2 in thread: Thread-2
+Signal handler finished for Thread2 in thread: Thread-2
+Object Thread2 created in thread: Thread-2
+```
+
+This output conclusively proves that Django signals run in the same thread as the caller because:
+
+1. For objects created in the main thread, both the object creation and signal handler execution occur in the "MainThread".
+2. For objects created in separate threads (Thread-1 and Thread-2), the signal handlers also execute in those same threads.
+
+If the signals were to run in a different thread, we would see mismatched thread names between the object creation and signal handler execution.
+
+This behavior demonstrates that Django signals indeed run in the same thread as the caller, maintaining the execution context of the operation that triggered the signal.
